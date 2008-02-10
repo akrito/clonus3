@@ -1,0 +1,39 @@
+# Name of the S3 bucket to backup to.  Bucket names are global, so common
+# names have probably already been taken.
+bucket: my_backup
+
+# AWS credentials
+access_key_id: xxxxxxxxxxxxxxxxxxxx
+secret_access_key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Should the entire pathname be used as the S3 key, or just the path
+# relative to the root?  Default is false (use entire pathname).
+# relative_paths: false
+
+# Use a canned acl for the bucket?  Default is "private".
+# bucket_acl: public-read
+
+# Use a canned acl for the objects?  Default is "private".
+# object_acl: public-read
+
+# List of the directory roots to backup.  These must be directories,
+# not files.  If "relative_paths" is "true", files uploaded from one
+# root may overwrite files uploaded from a previous root.
+roots: 
+  - /home/alex/repo
+  - /home/alex/bin
+  - /home/alex/Maildir/attic
+  - /home/alex/Maildir/sent
+  - /home/alex/Maildir/cur
+  - /home/alex/Maildir/new
+  - /home/alex/Maildir/tmp
+  - /home/alex/documents
+  
+# List of regular expressions that match files which should not be
+# uploaded
+ignore:
+  - (^|/)\.hg(/|$)
+  - (^|/)\.svn(/|$)
+  - rdiff-backup-data
+  - /\..*\.swp$
+  - ^/etc/gconf/
