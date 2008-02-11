@@ -5,7 +5,8 @@
 
 # TODO
 # - funky characters in names aren't supported very well
-# - implement --delete
+# - optionally gzip & set content-encoding
+# - optionally set content-type
 
 # For S3 access in irb:
 # require 'rubygems'
@@ -63,6 +64,10 @@ class BackupActor
             @client.create_bucket(@bucket_name)
         end
         
+        if @options[:delete]
+            delete
+        end
+
         @settings['roots'].sort.each do |root|
             walk(root, '')
         end
@@ -160,7 +165,38 @@ class BackupActor
         else
             say " (dry run)"
         end
-        
+    end
+
+    def delete
+        say "  Cleaning S3: "
+        marker = ''
+        loop do
+            resp = @client.list_bucket(@bucket_name, { 'marker' => marker })
+            break if resp == []
+            say '.'
+            marker = resp.last[:key]
+
+            resp.each do |obj|
+                if not File.exist?(abs_path_from_key(obj[:key]))
+                    say "\n- Removing %s" % obj[:key]
+                    if @options[:dryrun]
+                        say " (dry run)"
+                    else
+                        @client.delete(@bucket_name, obj[:key])
+                    end
+                end
+            end
+        end
+    end
+
+    def abs_path_from_key(key)
+        if @settings['relative_paths'] # only works if there's a single root
+            abs_path = @settings['roots'].first + '/' + key
+        else
+            abs_path = '/' + key
+        end
+
+        return abs_path
     end
 end
 
@@ -180,11 +216,8 @@ OptionParser.new do |opts|
         options[:verbosity] = 2
     end
   
-    opts.on("-d", "--delete", "Remove files which won't be backed up from S3 first") do |d|
+    opts.on("-d", "--delete", "First, remove files which won't be backed up from S3") do |d|
         options[:delete] = d
-        # FIXME
-        puts "--delete isn't implemented yet, sorry"
-        exit 1
     end
     
     opts.on("-n", "--dry-run", "Connect to S3 and create the bucket, but don't upload or remove files") do |n|
