@@ -3,10 +3,18 @@
 # clonus3: a simple backup tool for Amazon's S3 service
 # usage: clonus3.rb --help
 
+# Requires: right_aws -- http://rightaws.rubyforge.org/
+#           bdb.rd -- http://moulon.inra.fr/ruby/bdb.html
+
 # TODO
-# - funky characters in names aren't supported very well
+# - funky characters in names don't work: "?"
 # - optionally gzip & set content-encoding
 # - optionally set content-type
+# - Should --delete verify the object does not match an "ignore"
+#   pattern?  Should it verify the file path for the object is a
+#   subdirectory of a root?
+# - How will --delete work with relative paths AND multiple roots?
+# - md5 support
 
 # For S3 access in irb:
 # require 'rubygems'
@@ -18,6 +26,7 @@ require 'rubygems'
 require 'yaml'
 require 'right_aws'
 require 'optparse'
+require 'bdb'
 
 class BackupActor
     
@@ -26,6 +35,41 @@ class BackupActor
             print str
             STDOUT.flush
         end
+    end
+
+    def s3path(root, rel_path)
+        if @settings['relative_paths']
+            return rel_path
+        else
+            abs_path = root + '/' + rel_path
+            return abs_path[1..-1]
+        end
+    end
+
+    # Perform a head request, optionally caching
+    def head(root, rel_path)
+        
+        # First, check the cache
+        if @settings['cache']
+            headers_yaml = @bdb[s3path(root, rel_path)]
+            if headers_yaml
+                return YAML.load(headers_yaml)
+            end
+        end
+
+        # If no cache hit, HEAD S3
+        begin
+            headers = @client.head(@bucket_name, s3path(root, rel_path))
+        rescue RightAws::AwsError # path doesn't exist on S3
+            headers = nil
+        end
+
+        # Save headers to the cache
+        if @settings['cache'] and headers
+            @bdb[s3path(root, rel_path)] = YAML.dump(headers)
+        end
+
+        return headers
     end
 
     # Connect to S3.
@@ -53,6 +97,11 @@ class BackupActor
             :protocol => 'http',
             :logger => @log
         )
+
+        db_location = @settings['cache']
+        if db_location
+            @bdb = BDB::Hash.open(@settings['cache'], nil, BDB::CREATE)
+        end
     end
 
     def backup
@@ -113,21 +162,14 @@ class BackupActor
                     mtime = File.mtime(path).to_i.to_s
                     size = File.size(path).to_s
 
-                    begin
-                        if @settings['relative_paths']
-                            headers = @client.head(@bucket_name, rel_path)
-                        else
-                            # strip the leading "/" from path
-                            headers = @client.head(@bucket_name, path[1..-1])
-                        end
-                        
+                    headers = head(root, rel_path)
+                    if headers
                         if (mtime != headers['x-amz-meta-mtime']) or (size != headers['content-length'])
                             timed_store(root, rel_path, "+ Updating #{path} - #{size}")
                         else
                             say '.'
                         end
-
-                    rescue RightAws::AwsError # path doesn't exist on S3
+                    else
                         timed_store(root, rel_path, "! Uploading #{path} - #{size}")
                     end
                     
@@ -157,6 +199,12 @@ class BackupActor
         say "\n" + text
 
         if not @options[:dryrun]
+            
+            # Clear the cache
+            if @settings['cache']
+                @bdb[s3path(root, rel_path)] = nil
+            end
+
             t1 = Time.now
             @client.put(@bucket_name, aws_path, File.open(abs_path), request_headers)
             t = Time.now - t1
@@ -182,6 +230,11 @@ class BackupActor
                     if @options[:dryrun]
                         say " (dry run)"
                     else
+                        # Clear the cache
+                        if @settings['cache']
+                            @bdb[obj[:key]] = nil
+                        end
+
                         @client.delete(@bucket_name, obj[:key])
                     end
                 end

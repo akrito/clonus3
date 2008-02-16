@@ -6,6 +6,11 @@ bucket: my_backup
 access_key_id: xxxxxxxxxxxxxxxxxxxx
 secret_access_key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
+# Would you like to cache HEAD requests?  Where?  This *greatly*
+# increases performance, but may not be as safe.  Use with caution if
+# you're making backups with clonus3.
+cache: /home/alex/.clonus3/mysite.db
+
 # Should the entire pathname be used as the S3 key, or just the path
 # relative to the root?  Default is false (use entire pathname).
 # relative_paths: false
