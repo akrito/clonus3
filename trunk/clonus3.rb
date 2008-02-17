@@ -4,17 +4,18 @@
 # usage: clonus3.rb --help
 
 # Requires: right_aws -- http://rightaws.rubyforge.org/
-#           bdb.rd -- http://moulon.inra.fr/ruby/bdb.html
+#           bdb bindings for caching -- http://moulon.inra.fr/ruby/bdb.html
 
 # TODO
-# - funky characters in names don't work: "?"
+# - funky characters in names don't work: "?", "+".  Should we URI-encode them?
 # - optionally gzip & set content-encoding
 # - optionally set content-type
 # - Should --delete verify the object does not match an "ignore"
 #   pattern?  Should it verify the file path for the object is a
 #   subdirectory of a root?
-# - How will --delete work with relative paths AND multiple roots?
+# - Make --delete work with relative paths AND multiple roots
 # - md5 support
+# - Allow single files to be specified in roots.
 
 # For S3 access in irb:
 # require 'rubygems'
@@ -26,10 +27,42 @@ require 'rubygems'
 require 'yaml'
 require 'right_aws'
 require 'optparse'
-require 'bdb'
 
 class BackupActor
-    
+
+    def initialize(options)
+      
+        # command-line options
+        @options = options
+
+        # settings from the config file
+        @settings = YAML.load_file(@options[:settings_file])
+
+        @bucket_name = @settings['bucket']
+        
+        @log = Logger.new(STDERR)
+        case @options[:verbosity]
+        when 0,1
+            @log.level = Logger::ERROR
+        when 2
+            @log.level = Logger::DEBUG
+        end
+
+        @client = RightAws::S3Interface.new(
+            @settings['access_key_id'],
+            @settings['secret_access_key'],
+            :port => 80,
+            :protocol => 'http',
+            :logger => @log
+        )
+
+        db_location = @settings['cache']
+        if db_location
+            require 'bdb'
+            @bdb = BDB::Hash.open(@settings['cache'], nil, BDB::CREATE)
+        end
+    end
+
     def say(str)
         if @options[:verbosity] >= 1
             print str
@@ -72,49 +105,18 @@ class BackupActor
         return headers
     end
 
-    # Connect to S3.
-    def initialize(options)
-      
-        @options = options
-        @settings = YAML.load_file(@options[:settings_file])
-        @bucket_name = @settings['bucket']
-        
-        @log = Logger.new(STDERR)
-        
-        case @options[:verbosity]
-        when 0
-            @log.level = Logger::ERROR
-        when 1
-            @log.level = Logger::ERROR
-        when 2
-            @log.level = Logger::DEBUG
-        end
-
-        @client = RightAws::S3Interface.new(
-            @settings['access_key_id'],
-            @settings['secret_access_key'],
-            :port => 80,
-            :protocol => 'http',
-            :logger => @log
-        )
-
-        db_location = @settings['cache']
-        if db_location
-            @bdb = BDB::Hash.open(@settings['cache'], nil, BDB::CREATE)
-        end
-    end
-
     def backup
     
-        # Create and/or update the bucket's acl
+        # Create and/or update the bucket and its acl
         if @settings['bucket_acl']
             @client.create_bucket(@bucket_name, 'x-amz-acl' => @settings['bucket_acl'])
         else
             @client.create_bucket(@bucket_name)
         end
         
-        if @options[:delete]
-            delete
+        # Only list the contents of the bucket if we have to
+        if @options[:delete] or (@settings['cache'] and @options[:rebuildcache])
+            scan_s3
         end
 
         @settings['roots'].sort.each do |root|
@@ -185,12 +187,6 @@ class BackupActor
         size = File.size(abs_path)
         mtime = File.mtime(abs_path).to_i
 
-        if @settings['relative_paths']
-            aws_path = rel_path
-        else
-            aws_path = abs_path[1..-1]
-        end
-            
         request_headers = { 'x-amz-meta-mtime' => mtime }
         if @settings['object_acl']
             request_headers['x-amz-acl'] = @settings['object_acl']
@@ -206,7 +202,7 @@ class BackupActor
             end
 
             t1 = Time.now
-            @client.put(@bucket_name, aws_path, File.open(abs_path), request_headers)
+            @client.put(@bucket_name, s3path(root, rel_path), File.open(abs_path), request_headers)
             t = Time.now - t1
     
             say " in %.2fs [%.2fKB/s]" % [ t, (size.to_i / 1000.0) / t ]
@@ -215,8 +211,14 @@ class BackupActor
         end
     end
 
-    def delete
-        say "  Cleaning S3: "
+    def scan_s3
+        say "  Listing bucket: "
+        
+        if @settings['cache'] and @options[:rebuildcache]
+            newbdb_name = @settings['cache'] + '.tmp'
+            newbdb = BDB::Hash.open(newbdb_name, nil, BDB::CREATE | BDB::TRUNCATE)
+        end
+        
         marker = ''
         loop do
             resp = @client.list_bucket(@bucket_name, { 'marker' => marker })
@@ -225,24 +227,59 @@ class BackupActor
             marker = resp.last[:key]
 
             resp.each do |obj|
-                if not File.exist?(abs_path_from_key(obj[:key]))
-                    say "\n- Removing %s" % obj[:key]
-                    if @options[:dryrun]
-                        say " (dry run)"
-                    else
-                        # Clear the cache
-                        if @settings['cache']
-                            @bdb[obj[:key]] = nil
-                        end
 
-                        @client.delete(@bucket_name, obj[:key])
+                key = obj[:key]
+
+                # Does the S3 object still exist on the filesystem?
+
+                if @options[:delete]
+
+                    # TODO: make sure the file is in a valid root and
+                    # doesn't match an ignored regex
+
+                    if not File.exist?(file_path_from_key(key))
+                        say "\n- Unstoring %s" % key
+                        if @options[:dryrun]
+                            say " (dry run)"
+                        else
+                            # Clear the cache
+                            if @settings['cache']
+                                @bdb[key] = nil
+                            end
+                            
+                            @client.delete(@bucket_name, key)
+                        end
+                    end
+                end
+
+                # Remove out-of-date cached HEAD responses
+
+                if @settings['cache'] and @options[:rebuildcache]
+                    cached_obj_yaml = @bdb[key]
+                    if cached_obj_yaml
+                        cached_obj = YAML.load(cached_obj_yaml)
+
+                        if cached_obj['etag'] == obj[:e_tag]
+                            newbdb[key] = cached_obj_yaml
+                        else
+                            @log.error "S3 does not match cache.  Who messed with my bucket?"
+                        end
                     end
                 end
             end
         end
+
+        # set @bdb to the new cache
+
+        if @settings['cache'] and @options[:rebuildcache]
+            newbdb.close
+            @bdb.close
+            FileUtils.mv(newbdb_name, @settings['cache'])
+            @bdb = BDB::Hash.open(@settings['cache'], nil, 0)
+        end
     end
 
-    def abs_path_from_key(key)
+    def file_path_from_key(key)
         if @settings['relative_paths'] # only works if there's a single root
             abs_path = @settings['roots'].first + '/' + key
         else
@@ -256,9 +293,10 @@ end
 # Set up default options
 options = {}
 options[:verbosity] = 1
+options[:rebuildcache] = true
 
 # Parse command-line options
-OptionParser.new do |opts|
+opts = OptionParser.new do |opts|
     opts.banner = "Usage: clonus3.rb [options] YAML_FILE"
 
     opts.on("-q", "--quiet", "Only show errors") do |q|
@@ -277,15 +315,27 @@ OptionParser.new do |opts|
         options[:dryrun] = n
     end
     
+    opts.on("-r", "--[no-]rebuild-cache", "Rebuild the cache, tossing out stale HEAD responses.  --rebuild-cache is the default") do |r|
+        options[:rebuildcache] = r
+    end
+
     opts.on("-h", "--help", "Show this message") do
         puts opts
         exit 1
     end
     
-end.parse!
+end
 
-# If it's not an option, it's the settings file
-options[:settings_file] = ARGV.first
+opts.parse!
+
+# If it's not an option, it's the settings file.
+# If no settings file is given, error.
+if ARGV.first
+    options[:settings_file] = ARGV.first
+else
+    puts opts
+    exit
+end
 
 b = BackupActor.new(options)
 b.backup
