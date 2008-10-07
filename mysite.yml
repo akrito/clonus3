@@ -8,8 +8,9 @@ secret_access_key: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 # Would you like to cache HEAD requests?  Where?  This *greatly*
 # increases performance.  --no-rebuild-cache makes this even faster,
-# but possibly isn't as safe.
-cache: /home/alex/.clonus3/mysite.db
+# but possibly isn't as safe.  Be aware that clonus3 will add a '.db'
+# extension to the filename.
+cache: /home/alex/.clonus3/mysite
 
 # Should the entire pathname be used as the S3 key, or just the path
 # relative to the root?  Default is false (use entire pathname).

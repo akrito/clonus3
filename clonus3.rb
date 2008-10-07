@@ -27,6 +27,7 @@ require 'rubygems'
 require 'yaml'
 require 'right_aws'
 require 'optparse'
+require 'fileutils'
 
 class BackupActor
 
@@ -58,8 +59,8 @@ class BackupActor
 
         db_location = @settings['cache']
         if db_location
-            require 'bdb'
-            @bdb = BDB::Hash.open(@settings['cache'], nil, BDB::CREATE)
+            require 'dbm'
+            @db = DBM.new(@settings['cache'])
         end
     end
 
@@ -84,7 +85,7 @@ class BackupActor
         
         # First, check the cache
         if @settings['cache']
-            headers_yaml = @bdb[s3path(root, rel_path)]
+            headers_yaml = @db[s3path(root, rel_path)]
             if headers_yaml
                 return YAML.load(headers_yaml)
             end
@@ -99,7 +100,7 @@ class BackupActor
 
         # Save headers to the cache
         if @settings['cache'] and headers
-            @bdb[s3path(root, rel_path)] = YAML.dump(headers)
+            @db[s3path(root, rel_path)] = YAML.dump(headers)
         end
 
         return headers
@@ -198,7 +199,7 @@ class BackupActor
             
             # Clear the cache
             if @settings['cache']
-                @bdb[s3path(root, rel_path)] = nil
+                @db.delete(s3path(root, rel_path))
             end
 
             t1 = Time.now
@@ -215,8 +216,8 @@ class BackupActor
         say "  Listing bucket: "
         
         if @settings['cache'] and @options[:rebuildcache]
-            newbdb_name = @settings['cache'] + '.tmp'
-            newbdb = BDB::Hash.open(newbdb_name, nil, BDB::CREATE | BDB::TRUNCATE)
+            newdb_name = @settings['cache'] + '.tmp'
+            newdb = DBM.new(newdb_name)
         end
         
         marker = ''
@@ -244,7 +245,7 @@ class BackupActor
                         else
                             # Clear the cache
                             if @settings['cache']
-                                @bdb[key] = nil
+                                @db.delete key
                             end
                             
                             @client.delete(@bucket_name, key)
@@ -255,12 +256,12 @@ class BackupActor
                 # Remove out-of-date cached HEAD responses
 
                 if @settings['cache'] and @options[:rebuildcache]
-                    cached_obj_yaml = @bdb[key]
+                    cached_obj_yaml = @db[key]
                     if cached_obj_yaml
                         cached_obj = YAML.load(cached_obj_yaml)
 
-                        if cached_obj['etag'] == obj[:e_tag]
-                            newbdb[key] = cached_obj_yaml
+                        if cached_obj and cached_obj['etag'] == obj[:e_tag]
+                            newdb[key] = cached_obj_yaml
                         else
                             @log.error "S3 does not match cache.  Who messed with my bucket?"
                         end
@@ -269,13 +270,13 @@ class BackupActor
             end
         end
 
-        # set @bdb to the new cache
+        # set @db to the new cache
 
         if @settings['cache'] and @options[:rebuildcache]
-            newbdb.close
-            @bdb.close
-            FileUtils.mv(newbdb_name, @settings['cache'])
-            @bdb = BDB::Hash.open(@settings['cache'], nil, 0)
+            newdb.close
+            @db.close
+            FileUtils.mv(newdb_name + '.db', @settings['cache'] + '.db')
+            @db = DBM.new(@settings['cache'])
         end
     end
 
