@@ -107,14 +107,15 @@ class BackupActor:
                 if any(re.search(x, path) for x in self.settings['ignore']):
                     continue
                 try:
-                    mtime = str(os.path.getmtime(path))
+                    mtime = str(int(os.path.getmtime(path)))
                     size = str(os.path.getsize(path))
                     headers = self.head(root, path)
                     if headers:
                         if mtime != headers['mtime'] or size != headers['size']:
                             self.timed_store(root, path, "+ Updating %s - %s" % (path, size))
                         else:
-                            self.spinner.spin()
+                            if not self.options.quiet:
+                                self.spinner.spin()
                     else:
                         self.timed_store(root, path, "! Uploading %s - %s" % (path, size))
                     
@@ -123,7 +124,7 @@ class BackupActor:
 
     def timed_store(self, root, path, text):
         size = os.path.getsize(path)
-        mtime = os.path.getmtime(path)
+        mtime = int(os.path.getmtime(path))
 
         self.say(text)
 
@@ -141,7 +142,7 @@ class BackupActor:
             #f = open(path)
             #k.send_file(f)
             #f.close()
-            k.set_contents_from_filename(path)
+            k.set_contents_from_filename(path, cb = lambda x, y: self.say('.'))
             t = time() - t1
             self.say(" in %.2fs [%.2fKB/s]\n" % (t, (size / 1000.0) / t))
         else:
