@@ -132,7 +132,7 @@ class BackupActor:
 
         if not self.options.dryrun:
             # Clear the cache
-            if not self.db is None:
+            if (not self.db is None) and self.db.has_key(self.s3path(root, path)):
                 del self.db[self.s3path(root, path)]
 
             t1 = time()
@@ -141,10 +141,7 @@ class BackupActor:
             acl = self.settings.get('object_acl', None)
             if acl:
                 k.set_acl(acl)
-            #f = open(path)
-            #k.send_file(f)
-            #f.close()
-            k.set_contents_from_filename(path, cb = lambda x, y: self.say('.'))
+            k.set_contents_from_filename(path)
             t = time() - t1
             self.say(" in %.2fs [%.2fKB/s]\n" % (t, (size / 1000.0) / t))
         else:
