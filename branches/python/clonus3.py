@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from boto.s3 import Connection, Key
+from boto.s3 import Bucket, Connection, Key
 from optparse import OptionParser
 import anydbm
 import cPickle
@@ -88,7 +88,7 @@ class BackupActor:
             self.client.create_bucket(self.bucket_name, policy = self.settings['bucket_acl'])
         else:
             self.client.create_bucket(self.bucket_name)
-        self.bucket = self.client.get_bucket(self.bucket_name)
+        self.bucket = Bucket(self.client, self.bucket_name)
         
         # Only list the contents of the bucket if we have to
         if self.options.delete or ((not self.db is None) and self.options.rebuildcache):
