@@ -106,6 +106,8 @@ class BackupActor:
                 path = os.path.join(dirpath, entry)
                 if any(re.search(x, path) for x in self.settings['ignore']):
                     continue
+                if os.path.islink(path):
+                    continue
                 try:
                     mtime = str(int(os.path.getmtime(path)))
                     size = str(os.path.getsize(path))
