@@ -6,6 +6,7 @@ import anydbm
 import cPickle
 import os
 import re
+import shutil
 import sys
 from time import time
 import yaml
@@ -155,6 +156,7 @@ class BackupActor:
             newdb = anydbm.open(newdb_name, 'c')
 
         for k in self.bucket.list():
+            self.spinner.spin()
             key = k.name
 
             # Does the S3 object still exist on the filesystem?
@@ -189,7 +191,7 @@ class BackupActor:
         if (not self.db is None) and self.options.rebuildcache:
             newdb.close()
             self.db.close()
-            os.shutil.move(newdb_name, self.settings['cache'])
+            shutil.move(newdb_name, self.settings['cache'])
             self.db = anydbm.open(self.settings['cache'], 'w')
 
 if __name__ == '__main__':
