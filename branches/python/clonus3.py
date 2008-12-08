@@ -2,13 +2,13 @@
 
 from boto.s3 import Bucket, Connection, Key
 from optparse import OptionParser
+from time import time
 import anydbm
-import cPickle
 import os
 import re
 import shutil
+import simplejson
 import sys
-from time import time
 import yaml
 
 
@@ -69,7 +69,7 @@ class BackupActor:
         if not self.db is None:
             headers_pickled = self.db.get(self.s3path(root, path), None)
             if headers_pickled:
-                return cPickle.loads(headers_pickled)
+                return simplejson.loads(headers_pickled)
         # If no cache hit, HEAD S3
         k = self.bucket.get_key(self.s3path(root, path))
         if k:
@@ -79,7 +79,7 @@ class BackupActor:
 
         # Save headers to the cache
         if (not self.db is None) and headers:
-            self.db[self.s3path(root, path)] = cPickle.dumps(headers)
+            self.db[self.s3path(root, path)] = simplejson.dumps(headers)
 
         return headers
 
@@ -180,7 +180,7 @@ class BackupActor:
             if (not self.db is None) and self.options.rebuildcache:
                 cached_headers_pickled = self.db.get(key, None)
                 if cached_headers_pickled:
-                    cached_headers = cPickle.loads(cached_headers_pickled)
+                    cached_headers = simplejson.loads(cached_headers_pickled)
                     if cached_headers['etag'] == k.etag:
                         newdb[key] = cached_headers_pickled
                     else:
