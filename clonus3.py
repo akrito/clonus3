@@ -17,7 +17,7 @@ class Spinner:
     def __init__(self):
         self.status = 0
         self.locations = ['|', '/', '-', '\\']
-        
+
     def spin(self):
         sys.stderr.write("%s\r" % self.locations[self.status])
         sys.stderr.flush()
@@ -25,7 +25,7 @@ class Spinner:
 
 
 class BackupActor:
-    
+
     def __init__(self, options, settings_file):
         self.options = options
         f = open(settings_file)
@@ -33,19 +33,19 @@ class BackupActor:
         f.close()
         self.bucket_name = self.settings['bucket']
         self.spinner = Spinner()
-        
+
         self.client = Connection(
             aws_access_key_id = self.settings['access_key_id'],
             aws_secret_access_key = self.settings['secret_access_key'],
             is_secure = False
         )
-        
+
         db_location = self.settings.get('cache', None)
         if db_location:
             self.db = anydbm.open(db_location, 'c')
         else:
             self.db = None
-            
+
     def say(self, str):
         if not self.options.quiet:
             sys.stdout.write(str)
@@ -60,7 +60,7 @@ class BackupActor:
         if self.settings.get('relative_paths', False):
             return self.settings['roots'][0] + '/' + key
         return '/' + key
-        
+
     def head(self, root, path):
         """
         Perform a head request, optionally caching
@@ -90,11 +90,11 @@ class BackupActor:
         else:
             self.client.create_bucket(self.bucket_name)
         self.bucket = Bucket(self.client, self.bucket_name)
-        
+
         # Only list the contents of the bucket if we have to
         if self.options.delete or ((not self.db is None) and self.options.rebuildcache):
             self.scan_s3()
-        
+
         for root in sorted(self.settings['roots']):
             self.walk(root)
         self.say("\n")
@@ -121,7 +121,7 @@ class BackupActor:
                                 self.spinner.spin()
                     else:
                         self.timed_store(root, path, "! Uploading %s - %s" % (path, size))
-                    
+
                 except Exception, e:
                     sys.stderr.write("Could not back up %s: %s\n" % (path, e))
 
@@ -143,6 +143,8 @@ class BackupActor:
             if acl:
                 k.set_acl(acl)
             k.set_contents_from_filename(path)
+            if acl:
+                k.set_acl(acl)
             t = time() - t1
             self.say(" in %.2fs [%.2fKB/s]\n" % (t, (size / 1000.0) / t))
         else:
@@ -150,7 +152,7 @@ class BackupActor:
 
     def scan_s3(self):
         self.say("  Listing bucket\n")
-        
+
         if (not self.db is None) and self.options.rebuildcache:
             newdb_name = self.settings['cache'] + '.tmp'
             newdb = anydbm.open(newdb_name, 'c')
